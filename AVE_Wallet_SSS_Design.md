@@ -719,8 +719,6 @@ Agent 签名有两种可行策略：
 ```
 用户发起交易 / dApp 发起签名请求
         ↓
-Passkey / FaceID / TouchID 身份验证
-        ↓
 从设备 TEE 直接读取目标链派生私钥
         → 签名（secp256k1 或 Ed25519）
         → 私钥读取后不离开 TEE 保护边界

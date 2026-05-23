@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /d/dev/git/ave/tss-lib/demo && go run main.go)",
+      "Bash(cd /d/dev/git/ave/tss-lib/demo_multichain && go build ./...)",
+      "Bash(go run:*)",
+      "Bash(cd /d/dev/git/ave/tss-lib/demo_bsc && go mod tidy 2>&1)",
+      "Bash(go build:*)",
+      "Bash(git remote:*)",
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(cd D:/dev/git/ave/tss-lib/demo_sss && go mod tidy 2>&1)"
+    ]
+  }
+}
