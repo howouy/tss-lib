@@ -956,15 +956,15 @@ Agent 签名有两种可行策略：
 
 | 层次 | 执行方 | 校验内容 |
 |------|-------|---------|
-| 第一层 | 用户服务 | Passkey + 二次确认（双因子强制）、账号状态，签发 OperationToken |
-| 第二层 | 钱包服务（独立） | 独立验证 OperationToken、独立再验证 passkey assertion、校验导出次数 ≤ 1 次（硬限制）、写入独立审计日志 |
+| 第一层 | 用户服务 | Passkey 或 Email+TOTP（二选一）、账号状态，签发 OperationToken（`verified_methods` 标记使用方式） |
+| 第二层 | 钱包服务（独立） | 独立验证 OperationToken；**Passkey 路径**独立 re-verify assertion；**Email+TOTP 路径**信任 token；校验导出次数 ≤ 1 次（硬限制）；写入独立审计日志 |
 
 ```
-步骤1：强验证（比普通操作更严格）
+步骤1：身份验证（用户服务 — 第一层）
   ├─ 用户服务（第一层）
-  │    ├─ Passkey 验证 + Email / 谷歌验证器二次确认（双因子强制）
-  │    │    收集原始 passkey assertion，随请求透传至钱包服务
-  │    └─ 签发 OperationToken（operation=export_wallet, verified_methods=["passkey","totp"], exp=5min）
+  │    ├─ 2FA 验证（Passkey 优先，Email + 谷歌验证器备用）
+  │    │    Passkey 路径：收集原始 passkey assertion，随请求透传至钱包服务
+  │    └─ 签发 OperationToken（operation=export_wallet, verified_methods, exp=5min）
   └─ 弹出明确风险提示：
        "导出后，钱包将转为普通私钥钱包，
         无密钥丢失保护。30 天内可撤销导出，
@@ -981,9 +981,11 @@ Agent 签名有两种可行策略：
   ├─ 客户端向钱包服务发送"导出确认"请求（附 operation_token + passkey_assertion）
   ├─ 钱包服务独立校验：
   │    ├─ 验证 OperationToken 签名、operation=export_wallet、exp 未过期
-  │    ├─ 独立再验证 passkey assertion
+  │    ├─ 按 verified_methods 分路径：
+  │    │    [Passkey 路径]   独立 re-verify passkey assertion
+  │    │    [Email+TOTP 路径] 信任 inter-service signed token
   │    ├─ 校验该钱包导出次数 ≤ 1 次（硬限制，独立计数，不依赖上游传入）
-  │    └─ 写入独立审计日志
+  │    └─ 写入独立审计日志（记录 verified_methods）
   └─ 校验通过后：
        ├─ 撤销所有 Agent 会话
        ├─ 平台云 Share B 软删除（标记"待删除"，30 天后物理删除）
