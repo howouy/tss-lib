@@ -749,8 +749,8 @@ Agent 签名有两种可行策略：
 
 | 层次 | 执行方 | 校验内容 |
 |------|-------|---------|
-| 第一层 | 用户服务 | Passkey / 2FA 验证、账号状态、钱包归属，签发 OperationToken（含 passkey assertion 指纹） |
-| 第二层 | 钱包服务（独立） | 独立验证 OperationToken、独立再验证 passkey assertion、独立限频（30 天 ≤ 3 次）、写入独立审计日志 |
+| 第一层 | 用户服务 | Passkey / 2FA 验证、账号状态、钱包归属，签发 OperationToken（`verified_methods` 标记本次使用的验证方式） |
+| 第二层 | 钱包服务（独立） | 独立验证 OperationToken 签名；**Passkey 路径**额外独立 re-verify assertion；**Email+TOTP 路径**信任 token 但限频更严（30 天 ≤ 2 次）；均写入独立审计日志 |
 | 第三层 | Nitro Enclave | 验证 ApprovedToken（防宿主伪造）、B+C 重建、memzero |
 
 ```
@@ -775,15 +775,19 @@ Agent 签名有两种可行策略：
   │    ePriv_client 仅存内存，用于后续解密 A'
   ├─ 用钱包服务公钥 ECDH 加密 Share B
   └─ POST /recovery/submit
-       { enc_B, ePub_client, wallet_address, operation_token, passkey_assertion }
+       { enc_B, ePub_client, wallet_address, operation_token,
+         passkey_assertion(如有) }  // Passkey 路径随 token 透传 assertion；Email+TOTP 路径此字段为空
 
 步骤4：钱包服务处理
   │ ── 宿主风控（第二层独立校验）──
   ├─ 验证 OperationToken 签名（inter-service key，KMS 管理）
   ├─ 校验 operation=recover_wallet 与请求匹配，exp 未过期
-  ├─ 独立再验证 passkey assertion（不依赖用户服务的声明）
-  ├─ 独立限频（单账号 30 天 ≤ 3 次）
-  ├─ 写入独立审计日志
+  ├─ 按 verified_methods 分路径处理：
+  │    [Passkey 路径]   独立 re-verify passkey assertion（不依赖用户服务声明）
+  │                     限频：单账号 30 天 ≤ 3 次
+  │    [Email+TOTP 路径] OTP 已消费，无法独立再验证；信任 inter-service signed token
+  │                     限频更严：单账号 30 天 ≤ 2 次
+  ├─ 写入独立审计日志（记录 verified_methods，事后可区分两条路径）
   ├─ 校验通过 → 签发 ApprovedToken → vsock → Nitro Enclave
   │ ── Nitro Enclave 内 ──
   ├─ 验证 ApprovedToken
@@ -1242,21 +1246,40 @@ AI Agent 提交订单请求
 | `operation` | 操作类型（`recover_wallet` / `export_wallet` / `delete_wallet` / `agent_activate` 等），钱包服务核对与实际请求一致 |
 | `user_id` / `wallet_address` | 操作主体，防止跨用户伪造 |
 | `verified_methods` | 本次已完成的验证方式列表（如 `["passkey", "email_otp"]`） |
-| `verified_at` / `exp` | 签发时间 + 5 分钟过期，短窗口防重放 |
+| `verified_at` / `exp` | 签发时间 + 过期时长；一般操作 5 分钟，恢复操作 15 分钟（用户需时完成 iCloud/QR PIN 输入） |
 | `request_hash` | SHA256(请求体)，防中间人替换请求内容 |
 
 钱包服务逐项独立验证：Token 签名合法、`operation` 与请求匹配、`verified_methods` 满足本操作的最低要求、`exp` 未超期、`request_hash` 一致。任一不符则拒绝，记录审计日志。
 
-**高危操作（恢复 / 导出 / 删除）：透传原始 Passkey Assertion**
+**高危操作（恢复 / 导出 / 删除）：两条验证路径**
 
-仅验证 OperationToken 还不够——上游声称"passkey 已验证"是可伪造的文字声明。这三类操作要求 App 将设备硬件产生的原始 **Passkey Assertion** 一并透传，由钱包服务独立验证：
+用户使用的 2FA 方式不同，钱包服务的独立验证能力也不同：
+
+**路径一：Passkey 认证（推荐，安全等级更高）**
+
+Passkey assertion 由设备硬件私钥（Secure Enclave / StrongBox）签名，任何持有用户公钥的服务均可独立验证，不依赖用户服务的声明。App 将原始 assertion 透传至钱包服务：
 
 ```
 App（设备硬件签名）──→ 用户服务（校验 + 签发 OperationToken）──→ 钱包服务
-raw passkey assertion ─────────────────────────────────────────→ 钱包服务独立再验证
+raw passkey assertion ─────────────────────────────────────────→ 钱包服务独立 re-verify
 ```
 
-设备侧 Passkey 私钥存于 Secure Enclave / StrongBox，签名不可伪造。即使用户服务整个被控制，钱包服务也能独立判断请求是否来自真实用户设备，从而识别内鬼伪造的请求。
+即使用户服务整个被控制，钱包服务也能独立判断请求是否来自真实用户设备，从而识别内鬼伪造的请求。
+
+**路径二：Email + TOTP 认证（降级路径）**
+
+OTP 是一次性凭证，由用户服务消费后即失效，钱包服务无法取得原始凭证重新验证。此路径钱包服务只能信任 inter-service signed OperationToken，信任根从「设备硬件」退化为「用户服务诚信 + inter-service key 安全性」。
+
+| 维度 | Passkey 路径 | Email + TOTP 路径 |
+|------|------------|-----------------|
+| 钱包服务能否独立验证凭证 | 能（re-verify assertion） | 不能（OTP 已消费） |
+| 用户服务被攻陷的影响 | 钱包服务仍可识别伪造请求 | 攻击者可伪造合法 token |
+| 信任根 | 用户设备硬件 + 密码学 | 用户服务 + inter-service key |
+| 恢复操作限频 | 30 天 ≤ 3 次 | 30 天 ≤ 2 次（更严） |
+
+两条路径的安全等级差异是 OTP 类认证的固有局限，行业普遍接受。补偿措施：Email+TOTP 路径限频更严，且 `verified_methods` 在 OperationToken 和审计日志中均明确记录，便于事后区分。
+
+> **最高敏感操作（导出私钥/助记词）强制要求 Passkey，不接受 Email+TOTP**，因为导出是不可逆操作，必须确保信任根在用户设备硬件。
 
 **Inter-service Signing Key 管理**
 
