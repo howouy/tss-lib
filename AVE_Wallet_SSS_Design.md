@@ -55,31 +55,31 @@
 ### 2.1 模块架构图
 
 ```
-╔══════════════════════════════════════════════════════════════════════════════════════════╗
-║                                      客户端层                                            ║
-║                                                                                          ║
-║  ┌───────────────────────────────────────────────┐   ┌──────────────────────────────┐   ║
-║  │              Android / iOS App                │   │     三方 Cloud（用户私有）     │   ║
-║  │                                               │   │                              │   ║
-║  │  ┌─────────────────────────────────────────┐  │   │  ┌──────────┐ ┌───────────┐  │   ║
-║  │  │             Device TEE                  │  │   │  │  iCloud  │ │  G Drive  │  │   ║
-║  │  │  StrongBox (Android) / Secure Enclave   │  │   │  └──────────┘ └───────────┘  │   ║
-║  │  │  - Share A（SSS 分片，x=1 或 x=n）      │  │   │  PIN 加密的 Share B 备份      │   ║
-║  │  │  - 各链派生私钥（BIP44，只读签名用）     │  │   │  用户自管，平台不可访问       │   ║
-║  │  └─────────────────────────────────────────┘  │   └──────────────────────────────┘   ║
-║  │                                               │                  ↑ OS API            ║
-║  │  本地能力模块：                               │              上传 / 下载              ║
-║  │  ・SSS 分片 / Lagrange 合并运算               │                                       ║
-║  │  ・ECDH 密钥协商 / AES-256-GCM 加解密         │                                       ║
-║  │  ・Passkey / FaceID / TouchID 认证            │                                       ║
-║  │  ・本地直签（从 TEE 取派生私钥，毫秒级）       │                                       ║
-║  └───────────────────────────────────────────────┘                                       ║
-╚══════════════════════════════════════════════════════════════════════════════════════════╝
-        │                    │                    │                    │
-        │ ① 账号 / 钱包       │ ② 交易签名          │ ③ Share B           │ ④ Share B 备份
-        │   业务 HTTPS        │   结果 HTTPS        │   上传/下载          │   (PIN 加密)
-        ▼                    ▼                    ▼                    ▼ OS API
-╔═══════════════════════════════════════╗   ╔══════════════════════╗  三方 Cloud
+╔════════════════════════════════════════════════════════╗   ╔══════════════════════════════╗
+║                       客户端层                          ║   ║    三方 Cloud（用户私有）     ║
+║                                                        ║   ║                              ║
+║  ┌──────────────────────────────────────────────────┐  ║   ║  ┌──────────┐ ┌───────────┐  ║
+║  │              Android / iOS App                   │  ║   ║  │  iCloud  │ │  G Drive  │  ║
+║  │                                                  │  ║   ║  └──────────┘ └───────────┘  ║
+║  │  ┌────────────────────────────────────────────┐  │  ║   ║  PIN 加密的 Share B 备份      ║
+║  │  │             Device TEE                     │  │  ║   ║  用户自管，平台不可访问       ║
+║  │  │  StrongBox (Android) / Secure Enclave      │  │  ║   ╚══════════════════════════════╝
+║  │  │  - Share A（SSS 分片，x=1 或 x=n）         │  │  ║            ↑ ④ OS API
+║  │  │  - 各链派生私钥（BIP44，只读签名用）        │  │  ║        上传 / 下载
+║  │  └────────────────────────────────────────────┘  │  ║
+║  │                                                  │  ║
+║  │  本地能力模块：                                  │  ║
+║  │  ・SSS 分片 / Lagrange 合并运算                  │  ║
+║  │  ・ECDH 密钥协商 / AES-256-GCM 加解密           │  ║
+║  │  ・Passkey / FaceID / TouchID 认证              │  ║
+║  │  ・本地直签（从 TEE 取派生私钥，毫秒级）         │  ║
+║  └──────────────────────────────────────────────────┘  ║
+╚════════════════════════════════════════════════════════╝
+        │                    │                    │
+        │ ① 账号 / 钱包       │ ② Agent交易          │ ③ Share B
+        │   业务 HTTPS        │   结果 HTTPS        │   上传/下载
+        ▼                    ▼                    ▼
+╔═══════════════════════════════════════╗   ╔══════════════════════╗
 ║             后端服务层                 ║   ║     平台云服务         ║
 ║                                       ║   ║   （AWS 独立账号 B）   ║
 ║  ┌─────────────────┐ ┌─────────────┐  ║   ║                      ║
@@ -150,7 +150,7 @@
 | 编号 | 交互方向 | 内容 | 协议 / 通道 |
 |------|---------|------|-----------|
 | ① | App → 用户服务 | 登录、2FA、钱包业务操作（创建/恢复/导出）| HTTPS |
-| ② | App → 交易服务 | Agent 授权开通、交易状态查询 | HTTPS |
+| ② | App → 交易服务 | Agent 授权开通、Agent交易订单提交，交易状态查询 | HTTPS |
 | ③ | App ↔ 平台云 | Share B 备份上传（钱包创建）/ 下载（恢复）| HTTPS |
 | ③' | App → 钱包服务 → 平台云 | Share B 上传（Agent 激活）：App 提交至钱包服务，钱包服务校验 master_sig / credit_json 后转存平台云 | HTTPS + 内网 |
 | ④ | App ↔ 三方 Cloud | Share B 备份（PIN加密）/ 恢复下载 | OS API |
@@ -430,7 +430,7 @@ Agent 签名有两种可行策略：
 恢复时：扫码 + 输入 PIN → Argon2id 派生密钥 → AES-256-GCM 解密 → Share B 明文
 ```
 
-### 4.4 Share C 钱包服务 设计
+### 4.4 Share C 加密（钱包服务）方案
 
 **核心原则：Share C 永不离开钱包服务**
 
@@ -444,9 +444,10 @@ Agent 签名有两种可行策略：
          a₁ = C - B
          S  = 3B - 2C
          新 A = f(new_x) = S + a₁ * new_x
-     - 用客户端临时公钥加密新 A 后回传
-     - B 明文在钱包服务内立即销毁，C 不出钱包服务
-     - Share C 本身不下发
+     - 用 ePub_client 加密 A'，存入服务端短期缓存（5 分钟，绑定 recovery_token）
+     - B 明文、Master Seed、A' 明文在钱包服务内立即销毁（memzero）
+     - App 端通过 POST /recovery/claim 主动拉取加密的 A'（而非服务端主动回传）
+     - C 不出钱包服务，Share C 本身不下发
 
   3. Agent 签名（激活期间）：
      - 接收用户上传的 Share B（ECDH 加密传输），转存至平台云服务（不在钱包服务本地持久化）
@@ -594,6 +595,81 @@ Agent 签名有两种可行策略：
 
 ---
 
+### 6.1 Share C 加密上传详细交互流程（ECDH + AES-256-GCM）
+
+> **设计原则：** 钱包服务 Nitro Enclave 持有加密密钥对，用户服务全程不参与解密，仅做鉴权和透明路由；Share C 明文仅在 Enclave 内存中短暂存在后即销毁。
+
+**密钥归属：**
+
+| 密钥 | 持有方 | 说明 |
+|------|-------|------|
+| `sPriv`（服务端临时 ECDH 私钥） | Nitro Enclave 内存 | 每次上传请求动态生成，用完即销毁，永不离开 Enclave |
+| `sPub`（服务端临时 ECDH 公钥） | 由钱包服务宿主经 vsock 转发给用户服务再下发 App | 公钥可公开，无安全风险 |
+| `ePriv_app`（App 端临时 ECDH 私钥） | App 内存 | 完成加密后立即销毁 |
+
+```
+── 阶段一：获取服务端临时公钥 ──
+
+  App → POST /wallet/share_c/init（附 JWT + Passkey assertion）
+    ↓
+  用户服务：
+    ├─ 校验 JWT、Passkey assertion、账号状态
+    └─ 转发至钱包服务宿主（内网 RPC）
+    ↓
+  钱包服务宿主 → vsock → Nitro Enclave：
+    ├─ 生成本次请求专属临时 ECDH 密钥对 (sPub, sPriv)
+    ├─ sPriv 仅存 Enclave 内存，绑定 upload_ticket（短期令牌，5 分钟有效）
+    └─ 返回 { sPub, upload_ticket }
+    ↓
+  App 接收 { sPub, upload_ticket }
+
+── 阶段二：App 本地加密 Share C ──
+
+  App 生成临时 ECDH 密钥对 (ePub_app, ePriv_app)
+    ↓
+  ECDH(ePriv_app, sPub) → raw_shared_secret
+    ↓
+  HKDF-SHA256(raw_shared_secret, salt=ePub_app, info="share_c_upload") → 32 字节 AES 密钥
+    ↓
+  AES-256-GCM(Share_C明文, aes_key, random_nonce) → enc_C
+    ↓
+  ePriv_app、aes_key 立即销毁（内存清除）
+
+── 阶段三：提交加密 Share C ──
+
+  App → POST /wallet/share_c/upload（附 JWT）
+    Body: { wallet_addr, enc_C, ePub_app, nonce, upload_ticket }
+    ↓
+  用户服务：
+    ├─ 校验 JWT、wallet_addr 归属当前账号
+    └─ 将 { enc_C, ePub_app, nonce, upload_ticket } 原样透传至钱包服务
+       （用户服务不解密，不持有任何密钥）
+    ↓
+  钱包服务宿主 → vsock → Nitro Enclave：
+    ├─ 验证 upload_ticket（有效期、未使用、绑定 sPriv）
+    ├─ ECDH(sPriv, ePub_app) → raw_shared_secret
+    ├─ HKDF-SHA256(raw_shared_secret, salt=ePub_app, info="share_c_upload") → AES 密钥
+    ├─ AES-256-GCM 解密 → Share C 明文
+    ├─ 调用 KMS 加密存储 Share C（PCR 绑定的 KMS key，仅当前 Enclave 镜像可解密）
+    ├─ sPriv、Share C 明文、AES key 立即销毁（memzero）
+    └─ 返回 { success }
+    ↓
+  用户服务透传结果给 App
+  App 标记 keyless 功能就绪
+```
+
+**安全要点：**
+
+| 关注点 | 保障措施 |
+|-------|---------|
+| 用户服务能否看到 Share C | 不能，enc_C 经 App 加密，用户服务仅做透明路由 |
+| 钱包服务宿主能否看到 Share C | 不能，vsock 传输，明文解密仅在 Enclave 内存中 |
+| 重放攻击 | upload_ticket 单次使用 + 5 分钟有效期，绑定具体 sPriv |
+| 中间人替换 sPub | App 可结合 NSM Attestation 验证 sPub 来自合法 Enclave（可选强化） |
+| sPriv 泄露 | sPriv 随 Enclave 请求生命周期，请求结束即 memzero |
+
+---
+
 ## 七、钱包恢复流程
 
 ```
@@ -685,11 +761,13 @@ Agent 签名有两种可行策略：
   ├─ 2FA 验证（Passkey 优先，Email + 谷歌验证器备用）
   │    收集原始 passkey assertion，随请求透传至钱包服务
   ├─ 校验账号历史中存在该钱包
-  └─ 签发 OperationToken（operation=recover_wallet, verified_methods, exp=5min）
+  └─ 签发 OperationToken（operation=recover_wallet, verified_methods, exp=15min）
+       > 恢复操作有效期设为 15 分钟，确保用户有足够时间完成
+       > iCloud/GDrive 下载 + PIN 输入等本地操作，不会因超时被迫重新 2FA。
 
 步骤2：客户端获取 Share B（本地解锁）
   ├─ 平台云：账号验证通过后平台云取出 Share B，ECDH 加密下发
-  ├─ iCloud/GDrive：本地下载 + 用户输入 PIN 解密
+  ├─ iCloud / GDrive：本地下载 + 用户输入 PIN 解密
   └─ 二维码：扫码 + 用户输入 PIN 解密
 
 步骤3：客户端提交 Share B（API 1：submit）
