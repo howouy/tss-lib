@@ -1928,29 +1928,43 @@ Bot 钱包已有 Share B（x=2，平台云）和 Share C（x=3，钱包服务 KM
 Bot 钱包无设备 TEE，无 Share A，导出时需由**服务端先用 B + C 生成 Share A**，经 ECDH 加密下发用户设备，用户在本地完成助记词重建和导出。复用 §7.4 两步恢复接口，仅入口不同。
 
 ```
-步骤1：强身份验证
-  ├─ Passkey 验证 + 二次确认（Email 或谷歌验证器）
-  └─ 弹出风险提示：
-       "导出后钱包将转为本地 EOA 钱包，不再享有 Bot 自动交易能力。
-        平台将在 30 天缓冲期后永久删除分片，操作不可逆。"
+步骤1：身份验证（用户服务）
+  ├─ 2FA 验证（Passkey 优先，Email + 谷歌验证器备用）
+  ├─ 弹出风险提示：
+  │    "导出后钱包将转为本地 EOA 钱包，不再享有 Bot 自动交易能力。
+  │     平台将在 30 天缓冲期后永久删除分片，操作不可逆。"
+  └─ 签发 OperationToken（operation=recover_wallet, exp=15min）
 
-步骤2：客户端提交导出请求（API 1：submit）
+步骤2：App 从平台云拉取 Share B（接口调用 1：平台云）
+  ├─ App → POST /platform/share_b/download { wallet_address, jwt }
+  ├─ 平台云验证账号身份，ECDH 加密 Share B 后下发
+  └─ App 解密得到 Share B 明文，暂存内存
+
+步骤3：App 提交加密 Share B，钱包服务恢复新 Share A（接口调用 2+3：复用 §7.4 两步）
+
+  ── API 1：POST /recovery/submit（经用户服务路由至钱包服务）──
   ├─ 客户端生成临时 ECDH 密钥对 (ePub_client, ePriv_client)
-  └─ 服务端（Nitro Enclave 内）：
-       ├─ 调平台云取 Share B（x=2），从 KMS 读取 Share C（x=3）
+  │    ePriv_client 仅存内存，用于后续解密 Share A
+  ├─ 用钱包服务公钥 ECDH 加密 Share B
+  └─ POST /recovery/submit
+       { enc_B, ePub_client, wallet_address, operation_token, passkey_assertion(如有) }
+       ↓
+  钱包服务宿主 → Nitro Enclave：
+       ├─ 验证 OperationToken、按 verified_methods 验证身份凭证
+       ├─ 从 KMS 读取 Share C（x=3）
        ├─ B + C → Lagrange → BIP39 熵 S 及系数 a₁
-       ├─ 生成新坐标 x=n，计算 Share A = f(n)（GF-256）
-       ├─ 用 ePub_client 加密 Share A，存入短期缓存
-       ├─ S、a₁ 及中间值立即销毁
+       ├─ 分配新坐标 x=n，计算 Share A = f(n)
+       ├─ 用 ePub_client 加密 Share A，存入短期缓存（绑定 recovery_token）
+       ├─ S、a₁、B 明文及中间值立即销毁（memzero）
        └─ 返回 { recovery_token }（5 分钟有效，单次可用）
 
-步骤3：客户端二次确认后领取 Share A（API 2：claim）
-  ├─ Passkey 生物识别确认弹窗
-  └─ 服务端返回 { enc_A, new_x }，recovery_token 立即失效
+  ── API 2：POST /recovery/claim ──
+  ├─ Passkey 生物识别二次确认（或账号 token 确认）
+  └─ 钱包服务返回 { enc_A, new_x }，recovery_token 立即失效
 
 步骤4：用户设备本地重建助记词
-  ├─ 用 ePriv_client 解密得到 Share A 明文
-  ├─ Share A + Share B（从平台云获取）→ Lagrange → BIP39 熵（16/32 字节）
+  ├─ 用 ePriv_client 解密得到 Share A 明文（x=n）
+  ├─ Share A（x=n）+ Share B（x=2，步骤2已获取，内存中）→ Lagrange → BIP39 熵 S
   ├─ BIP39 熵编码为助记词（12/24 词）展示给用户
   └─ 重建全程在设备内存中完成，不经过网络
 
