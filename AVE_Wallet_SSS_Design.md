@@ -692,8 +692,7 @@ Agent 签名有两种可行策略：
                  → B 明文、Master Seed 立即销毁
                  → 返回 recovery_token（单次可用）
                                ↓
-         ── 第二步：POST /recovery/claim ──
-              Passkey 生物识别二次确认
+              ── 第二步：POST /recovery/claim ──
                                ↓
            App 提交 recovery_token → 钱包服务返回 enc_A'
                                → token 立即失效

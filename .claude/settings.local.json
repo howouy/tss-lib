@@ -9,7 +9,9 @@
       "Bash(git remote:*)",
       "Bash(git add:*)",
       "Bash(git push:*)",
-      "Bash(cd D:/dev/git/ave/tss-lib/demo_sss && go mod tidy 2>&1)"
+      "Bash(cd D:/dev/git/ave/tss-lib/demo_sss && go mod tidy 2>&1)",
+      "Bash(python -c \"print\\('ok'\\)\")",
+      "Bash(python -c \"\nwith open\\('AVE_Wallet_SSS_Design.md', 'r', encoding='utf-8'\\) as f:\n    content = f.read\\(\\)\nprint\\('len:', len\\(content\\)\\)\nprint\\('has sec16:', '## 十六' in content\\)\n\")"
     ]
   }
 }
